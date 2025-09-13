@@ -1,0 +1,33 @@
+version: "3.9"
+
+services:
+  tron-listener-mysql:
+    image: mysql:8.0
+    container_name: tron-listener-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${DB_NAME}
+      MYSQL_USER: ${DB_USER}
+      MYSQL_PASSWORD: ${DB_PASS}
+    command: >
+      --default-authentication-plugin=mysql_native_password
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_0900_ai_ci
+      --max-connections=300
+      --innodb_flush_log_at_trx_commit=1
+      --innodb_flush_method=O_DIRECT
+      --innodb_buffer_pool_size=512M
+    ports:
+      - "127.0.0.1:${DB_PORT}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./sql:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -uroot -p${DB_ROOT_PASSWORD} -h 127.0.0.1 --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  mysql_data:

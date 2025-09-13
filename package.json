@@ -1,0 +1,22 @@
+{
+  "name": "tron-node-listener",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "tronweb": "^6",
+    "mysql2": "^3",
+    "p-limit": "^4",
+    "undici": "^6",
+    "zod": "^3",
+    "dotenv": "^16"
+  },
+  "devDependencies": {
+    "tsx": "^4",
+    "typescript": "^5",
+    "@types/node": "^20"
+  }
+}
