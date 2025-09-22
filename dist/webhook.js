@@ -1,7 +1,28 @@
 import { cfg } from './config.js';
 import { createHmac } from 'node:crypto';
 import { fetch } from 'undici';
-export async function sendWebhook(payload) {
+const webhookQueue = [];
+let isProcessingWebhooks = false;
+async function processWebhookQueue() {
+    if (isProcessingWebhooks || webhookQueue.length === 0)
+        return;
+    isProcessingWebhooks = true;
+    while (webhookQueue.length > 0) {
+        const event = webhookQueue.shift();
+        try {
+            await sendWebhookSync(event);
+        }
+        catch (error) {
+            console.warn('[webhook] failed:', error);
+        }
+    }
+    isProcessingWebhooks = false;
+}
+export function queueWebhook(payload) {
+    webhookQueue.push(payload);
+    setImmediate(processWebhookQueue);
+}
+async function sendWebhookSync(payload) {
     const body = JSON.stringify(payload);
     const headers = { 'content-type': 'application/json' };
     if (cfg.WEBHOOK_SIGNING_SECRET) {
@@ -13,4 +34,8 @@ export async function sendWebhook(payload) {
         const t = await res.text().catch(() => '');
         console.warn('Webhook failed', res.status, t);
     }
+}
+// Для обратной совместимости
+export async function sendWebhook(payload) {
+    return sendWebhookSync(payload);
 }

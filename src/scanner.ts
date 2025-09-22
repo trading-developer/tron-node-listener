@@ -2,7 +2,7 @@ import { tron, TRANSFER_TOPIC, usdtHexAddr, base58FromHex40 } from './tron.js';
 import { autoUnsubscribe, getScannerLast, insertEvent, listActive, setScannerLast, touchActivity } from './db.js';
 import pLimit from 'p-limit';
 import { cfg } from './config.js';
-import { queueWebhook } from "./webhook";
+import { queueWebhook } from "./webhook.js";
 
 const limit = pLimit(10);
 

@@ -2,7 +2,7 @@ import { tron, TRANSFER_TOPIC, usdtHexAddr, base58FromHex40 } from './tron.js';
 import { autoUnsubscribe, getScannerLast, insertEvent, listActive, setScannerLast, touchActivity } from './db.js';
 import pLimit from 'p-limit';
 import { cfg } from './config.js';
-import { sendWebhook } from "./webhook";
+import { queueWebhook } from "./webhook.js";
 const limit = pLimit(10);
 function normHex(s) {
     return (s || '').replace(/^0x/, '').toLowerCase();
@@ -10,41 +10,64 @@ function normHex(s) {
 export async function tickOnce() {
     await autoUnsubscribe(cfg.WATCH_MAX_IDLE_HOURS);
     const last = await getScannerLast();
-    const latestBlock = await tron.trx.getCurrentBlock();
-    const latestHeight = latestBlock.block_header.raw_data.number;
-    const toBlock = Math.max(last, latestHeight - cfg.CONFIRMATIONS);
-    if (toBlock <= last)
+    let latestHeight = last;
+    try {
+        const latestBlock = await tron.trx.getCurrentBlock();
+        latestHeight = latestBlock.block_header.raw_data.number;
+    }
+    catch (e) {
+        console.warn('[scanner] getCurrentBlock failed:', e);
         return;
+    }
+    const toBlock = Math.max(last, latestHeight - cfg.CONFIRMATIONS);
+    if (toBlock <= last) {
+        console.log(`[scanner] up-to-date: last=${last}, latest=${latestHeight}, conf=${cfg.CONFIRMATIONS}`);
+        return;
+    }
     const watched = await listActive();
     if (watched.length === 0) {
+        console.log(`[scanner] no watched addresses. fast-forward to ${toBlock}`);
         await setScannerLast(toBlock);
         return;
     }
-    const watchSet = new Set(watched.map(w => w.address_hex40));
+    // Нормализуем до нижнего регистра и последних 40 символов (без 0x)
+    const watchSet = new Set(watched.map(w => normHex(w.address_hex40).slice(-40)));
+    const watchMap = new Map(watched.map(w => [normHex(w.address_hex40).slice(-40), w.id]));
+    const usdtHex40 = normHex(usdtHexAddr).slice(-40);
     const start = last + 1;
     const end = Math.min(toBlock, start + cfg.SCAN_STEP - 1);
     for (let h = start; h <= end; h++) {
-        const block = await tron.trx.getBlock(h);
+        let block;
+        try {
+            block = await tron.trx.getBlock(h);
+        }
+        catch (e) {
+            console.warn(`[scanner] getBlock(${h}) failed:`, e);
+            continue;
+        }
         const txs = block?.transactions ?? [];
         if (!txs.length) {
             await setScannerLast(h);
             continue;
         }
-        const candidateTxIds = [];
-        for (const tx of txs) {
-            const c = tx.raw_data?.contract?.[0];
-            if (c?.type !== 'TriggerSmartContract')
-                continue;
-            const toContract = normHex(c.parameter?.value?.contract_address);
-            if (toContract === usdtHexAddr)
-                candidateTxIds.push(tx.txID);
-        }
+        // Берём все txid — события Transfer USDT могут возникать и при вызовах других контрактов
+        const candidateTxIds = txs.map(tx => tx.txID);
+        let insertedInBlock = 0;
         const tasks = candidateTxIds.map((txid) => limit(async () => {
-            const info = await tron.trx.getTransactionInfo(txid);
+            let info;
+            try {
+                info = await tron.trx.getTransactionInfo(txid);
+            }
+            catch (e) {
+                console.warn(`[scanner] getTransactionInfo(${txid}) failed:`, e);
+                return;
+            }
             const logs = info?.log ?? [];
             for (let i = 0; i < logs.length; i++) {
                 const log = logs[i];
-                if (normHex(log.address) !== usdtHexAddr)
+                const logAddr = normHex(log.address);
+                const logAddr40 = logAddr.slice(-40);
+                if (logAddr40 !== usdtHex40)
                     continue;
                 const topics = (log.topics || []).map(normHex);
                 if (topics[0] !== TRANSFER_TOPIC)
@@ -55,6 +78,18 @@ export async function tickOnce() {
                 const hitIN = watchSet.has(toHex40);
                 if (!hitIN && !hitOUT)
                     continue;
+                // Определяем watched_address_id для события
+                let watchedAddressId;
+                if (hitIN && hitOUT) {
+                    // Если оба адреса в watchlist, берём первый попавшийся
+                    watchedAddressId = watchMap.get(fromHex40) || watchMap.get(toHex40);
+                }
+                else if (hitIN) {
+                    watchedAddressId = watchMap.get(toHex40);
+                }
+                else if (hitOUT) {
+                    watchedAddressId = watchMap.get(fromHex40);
+                }
                 const fromB58 = base58FromHex40(fromHex40);
                 const toB58 = base58FromHex40(toHex40);
                 const value = BigInt('0x' + (normHex(log.data) || '0'));
@@ -83,10 +118,11 @@ export async function tickOnce() {
                     amount_raw: event.amount_raw,
                     amount: event.amount,
                     direction: event.direction,
-                    watched_hit: hitIN && hitOUT ? 'BOTH' : (hitIN ? 'TO' : 'FROM')
+                    watched_hit: hitIN && hitOUT ? 'BOTH' : (hitIN ? 'TO' : 'FROM'),
+                    watched_address_id: watchedAddressId
                 });
-                // можно вынести в очередь, если вебхук медленный
-                await sendWebhook(event);
+                insertedInBlock += 1;
+                queueWebhook(event);
                 if (hitOUT)
                     await touchActivity(fromB58, event.ts);
                 if (hitIN)
