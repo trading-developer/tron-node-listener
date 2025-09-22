@@ -26,10 +26,10 @@ export async function setScannerLast(h: number) {
 }
 
 export type WatchedRow = {
-    address_base58: string; address_hex40: string; active: number;
+    id: number; address_base58: string; address_hex40: string; active: number;
 }
 export async function listActive(): Promise<WatchedRow[]> {
-    const [rows] = await pool.query('SELECT address_base58,address_hex40,active FROM watched_addresses WHERE active=1');
+    const [rows] = await pool.query('SELECT id,address_base58,address_hex40,active FROM watched_addresses WHERE active=1');
     return rows as WatchedRow[];
 }
 
@@ -53,17 +53,19 @@ export async function insertEvent(e: {
     from_hex40: string; to_hex40: string;
     amount_raw: string; amount: string;
     direction: 'IN'|'OUT'|'IN/OUT'; watched_hit: 'FROM'|'TO'|'BOTH';
+    watched_address_id?: number;
 }) {
     try {
         await pool.query(
             `INSERT INTO usdt_events
-       (txid,log_index,block_num,ts,from_addr_base58,to_addr_base58,from_hex40,to_hex40,amount_raw,amount,direction,watched_hit)
-       VALUES (:txid,:log_index,:block_num,:ts,:fB,:tB,:fH,:tH,:raw,:amt,:dir,:hit)`,
+       (txid,log_index,block_num,ts,from_addr_base58,to_addr_base58,from_hex40,to_hex40,amount_raw,amount,direction,watched_hit,watched_address_id)
+       VALUES (:txid,:log_index,:block_num,:ts,:fB,:tB,:fH,:tH,:raw,:amt,:dir,:hit,:wid)`,
             {
                 txid: e.txid, log_index: e.log_index, block_num: e.block_num, ts: e.ts,
                 fB: e.from_addr_base58, tB: e.to_addr_base58,
                 fH: e.from_hex40, tH: e.to_hex40,
-                raw: e.amount_raw, amt: e.amount, dir: e.direction, hit: e.watched_hit
+                raw: e.amount_raw, amt: e.amount, dir: e.direction, hit: e.watched_hit,
+                wid: e.watched_address_id || null
             }
         );
     } catch (err: any) {

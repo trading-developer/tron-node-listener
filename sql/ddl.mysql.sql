@@ -42,9 +42,12 @@ CREATE TABLE IF NOT EXISTS usdt_events
     amount           DECIMAL(30, 6)              NOT NULL,
     direction        ENUM('IN', 'OUT', 'IN/OUT') NOT NULL,
     watched_hit      ENUM('FROM', 'TO', 'BOTH')  NOT NULL,
+    watched_address_id BIGINT UNSIGNED NULL,
     created_at       DATETIME                    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uq_tx_log (txid, log_index),
     KEY              idx_block(block_num),
     KEY              idx_to(to_hex40),
-    KEY              idx_from(from_hex40)
+    KEY              idx_from(from_hex40),
+    KEY              idx_watched_id(watched_address_id),
+    FOREIGN KEY fk_watched_address (watched_address_id) REFERENCES watched_addresses(id) ON DELETE SET NULL
 );
